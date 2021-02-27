@@ -1,4 +1,7 @@
 use nannou::prelude::*;
+use nannou_audio as audio;
+use nannou_audio::Buffer;
+use std::f64::consts::PI;
 
 const MEASURE_LENGTH : usize = 16;
 const NOTE_RANGE : usize = 12;
@@ -13,7 +16,13 @@ struct Model {
     cells: [[NoteCell; MEASURE_LENGTH]; NOTE_RANGE],
     active_note: usize,
     cooldown: f64,
-    frames_since_tick: f64
+    frames_since_tick: f64,
+    stream: audio::Stream<Audio>,
+}
+
+struct Audio {
+    phase: f64,
+    hz: f64,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -33,20 +42,63 @@ fn model(app: &App) -> Model {
     let seconds_per_frame = 1.0 / 60.0; // TODO: Figure out why  app.fps(); is completely broken
     let frames_per_beat = 1.0 / (beats_per_second * seconds_per_frame as f64);
 
+    // Initialise the audio API so we can spawn an audio stream.
+    let audio_host = audio::Host::new();
+
+    // Initialise the state that we want to live on the audio thread.
+    let model = Audio {
+        phase: 0.0,
+        hz: 440.0,
+    };
+
+    let stream = audio_host
+        .new_output_stream(model)
+        .render(audio)
+        .build()
+        .unwrap();
+
     Model {
         _window,
         cells: blank_cells,
         active_note: 0,
         cooldown: frames_per_beat,
-        frames_since_tick: 0.0
+        frames_since_tick: 0.0,
+        stream
     }
 }
 
-fn update(app: &App, model: &mut Model, _update: Update) {
+// A function that renders the given `Audio` to the given `Buffer`.
+// In this case we play a simple sine wave at the audio's current frequency in `hz`.
+fn audio(audio: &mut Audio, buffer: &mut Buffer) {
+    let sample_rate = buffer.sample_rate() as f64;
+    let volume = 0.5;
+    for frame in buffer.frames_mut() {
+        let sine_amp = (2.0 * PI * audio.phase).sin() as f32;
+        audio.phase += audio.hz / sample_rate;
+        audio.phase %= sample_rate;
+        for channel in frame {
+            *channel = sine_amp * volume;
+        }
+    }
+}
+
+fn update(_app: &App, model: &mut Model, _update: Update) {
+    if !model.stream.is_playing() {
+        model.stream.play().unwrap();
+    }
+
     if model.frames_since_tick < model.cooldown {
         model.frames_since_tick += 1.0;
         return;
     }
+
+    model
+        .stream
+        .send(|audio| {
+            audio.hz += 10.0;
+        })
+        .unwrap();
+
     model.active_note = (model.active_note + 1) % 16;
     model.frames_since_tick = 0.0;
 }
