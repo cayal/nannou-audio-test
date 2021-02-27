@@ -17,10 +17,12 @@ const SAMPLE_RATE: usize = 44_100;
 
 const BPM : f64 = 135.0;
 
+const CHROMATIC : [usize; NOTE_RANGE] = [440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 783, 831];
+
 struct Model {
     _window: window::Id,
     cells: [[NoteCell; MEASURE_LENGTH]; NOTE_RANGE],
-    active_note: usize,
+    active_beat: usize,
     cooldown: f64,
     frames_since_tick: f64,
     audio: Audio,
@@ -62,7 +64,7 @@ impl Audio {
 
         let stream_id = event_loop
             .build_output_stream(&device, &format)
-            .expect("could not play steam");
+            .expect("could not play stream");
 
         thread::spawn(move || {
             event_loop.run(move |stream_id, stream_result| {
@@ -96,7 +98,12 @@ fn main() {
 
 fn model(app: &App) -> Model {
     let _window = app.new_window().view(view).build().unwrap();
-    let blank_cells = [[NoteCell(false) ; MEASURE_LENGTH] ; NOTE_RANGE];
+    let mut blank_cells = [[NoteCell(false) ; MEASURE_LENGTH] ; NOTE_RANGE];
+    blank_cells[0][0].0 = true;
+    blank_cells[2][0].0 = true;
+    blank_cells[3][4].0 = true;
+    blank_cells[7][6].0 = true;
+    blank_cells[6][8].0 = true;
 
     let beats_per_second = BPM / 60.0;
     let seconds_per_frame = 1.0 / 60.0; // TODO: Figure out why  app.fps(); is completely broken
@@ -110,7 +117,7 @@ fn model(app: &App) -> Model {
     Model {
         _window,
         cells: blank_cells,
-        active_note: 0,
+        active_beat: 0,
         cooldown: frames_per_beat,
         frames_since_tick: 0.0,
         audio,
@@ -126,7 +133,6 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
     }
 
     let mut sample = usfx::Sample::default();
-    sample.osc_frequency(1000);
     sample.osc_type(usfx::OscillatorType::Sine);
     sample.env_attack(0.1);
     sample.env_decay(0.1);
@@ -134,11 +140,16 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
     sample.env_release(0.5);
     sample.dis_crunch(0.2);
 
-    // Play a low sample with a square wave
-    model.audio.play(sample);
+    for i in 0..NOTE_RANGE {
+        let c = model.cells[i];
+        if c[model.active_beat].0 == true {
+            sample.osc_frequency(CHROMATIC[i]);
+            // Play a low sample with a square wave
+            model.audio.play(sample);
+        }
+    }
 
-
-    model.active_note = (model.active_note + 1) % 16;
+    model.active_beat = (model.active_beat + 1) % 16;
     model.frames_since_tick = 0.0;
 }
 
@@ -166,7 +177,7 @@ fn view(_app: &App, model: &Model, _frame: Frame) {
                 - centering_bias_x;
 
             // TODO fn compute_note_color();
-            let note_color = if j == model.active_note {LIGHTSKYBLUE} else {STEELBLUE};
+            let note_color = compute_note_color(model.cells[i][j].0, j == model.active_beat);
 
             draw.rect()
                 .w_h(CELL_DISPLAY_SIZE, CELL_DISPLAY_SIZE)
@@ -175,4 +186,13 @@ fn view(_app: &App, model: &Model, _frame: Frame) {
         }
     }
     draw.to_frame(_app, &_frame).unwrap();
+}
+
+fn compute_note_color(is_playing: bool, is_active_beat : bool) -> Rgb<u8>{
+    match (is_playing, is_active_beat) {
+        (false, false) => STEELBLUE,
+        (false, true) => LIGHTSKYBLUE,
+        (true, false) => BLACK,
+        (true, true) => RED,
+    }
 }
