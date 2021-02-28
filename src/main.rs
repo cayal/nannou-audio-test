@@ -3,9 +3,9 @@ use std::f64::consts::PI;
 use std::{
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
 };
 use cpal::traits::{EventLoopTrait, HostTrait};
+use rand::Rng;
 
 const MEASURE_LENGTH : usize = 16;
 const NOTE_RANGE : usize = 12;
@@ -15,7 +15,7 @@ const CELL_DISPLAY_PADDING : f32 = 3.0;
 
 const SAMPLE_RATE: usize = 44_100;
 
-const BPM : f64 = 135.0;
+const BPM : f64 = 185.0;
 
 const CHROMATIC : [usize; NOTE_RANGE] = [440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 783, 831];
 
@@ -62,7 +62,7 @@ impl Audio {
             data_type: cpal::SampleFormat::F32,
         };
 
-        let stream_id = event_loop
+        let _stream_id = event_loop
             .build_output_stream(&device, &format)
             .expect("could not play stream");
 
@@ -134,8 +134,8 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
 
     let mut sample = usfx::Sample::default();
     sample.osc_type(usfx::OscillatorType::Sine);
-    sample.env_attack(0.1);
-    sample.env_decay(0.1);
+    sample.env_attack(0.01);
+    sample.env_decay(0.8);
     sample.env_sustain(0.5);
     sample.env_release(0.5);
     sample.dis_crunch(0.2);
@@ -150,6 +150,11 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
     }
 
     model.active_beat = (model.active_beat + 1) % 16;
+
+    if model.active_beat == 0 {
+        model.cells = advance_automata(model.cells);
+    }
+
     model.frames_since_tick = 0.0;
 }
 
@@ -195,4 +200,90 @@ fn compute_note_color(is_playing: bool, is_active_beat : bool) -> Rgb<u8>{
         (true, false) => BLACK,
         (true, true) => RED,
     }
+}
+
+fn advance_automata(cells : [[NoteCell ; MEASURE_LENGTH] ; NOTE_RANGE]) -> [[NoteCell ; MEASURE_LENGTH] ; NOTE_RANGE] {
+    let mut next_cells = cells;
+    let mut rng = rand::thread_rng();
+
+    for i in 0..NOTE_RANGE {
+        for j in 0..MEASURE_LENGTH {
+            let c_n = count_neighbors(cells, i, j);
+
+            // 100 % prob at 2 neighbors with falloff to 0 as n-> n=0 and n>=4
+            let base_probability = (0.0-(c_n as f64 - 2.0).pow(2.0) + 4.0)/4.0.max(0.0);
+
+            // Rhythmatic bias to the 4th note, and a little bit of spice on the 2th notes
+            let rhythmatic_scalar = nutrient_field(j as f64);
+
+            let to_taste_bias = 0.9;
+
+            let probability = (base_probability as f64 * to_taste_bias) * rhythmatic_scalar;
+
+            let check : f64 = rng.gen();
+
+            //println!("{}", count_active_notes_1_semitone_up_and_down(cells, i, j));
+            if count_active_notes_1_semitone_up_and_down(cells, i, j) == 0
+                && count_active_notes_3_semitones_up_and_down(cells, i, j) < 3
+                && probability >= check {
+                next_cells[i][j] = NoteCell(true);
+            } else {
+                next_cells[i][j] = NoteCell(false);
+            }
+        }
+    }
+    return next_cells;
+}
+
+fn count_neighbors(cells : [[NoteCell ; MEASURE_LENGTH] ; NOTE_RANGE], i : usize, j : usize)-> usize {
+    let subset : [(usize, usize); 8]= get_moore_neighborhood(i, j);
+    return subset.iter().fold(0, |acc, x| {
+        return if cells[x.0][x.1].0 == true { acc+1 } else { acc+0 };
+    });
+}
+
+fn get_moore_neighborhood(i : usize, j : usize) -> [(usize, usize) ; 8] {
+    let wrap_cylinder_x = |int| int % MEASURE_LENGTH;
+    let wrap_cylinder_y = |int| int % NOTE_RANGE;
+    let j = j + MEASURE_LENGTH;
+    let i = i + NOTE_RANGE;
+
+    return [
+        (wrap_cylinder_y(j + 1), wrap_cylinder_x(i)), // north
+        (wrap_cylinder_y(j + 1), wrap_cylinder_x(i)), // south
+        (wrap_cylinder_y(j), wrap_cylinder_x(i+1)), // east
+        (wrap_cylinder_y(j), wrap_cylinder_x(i-1)), // weast
+        (wrap_cylinder_y(j - 1), wrap_cylinder_x(i+1)), // northeast
+        (wrap_cylinder_y(j + 1), wrap_cylinder_x(i+1)), // southeast
+        (wrap_cylinder_y(j-1), wrap_cylinder_x(i-1)), // northweast
+        (wrap_cylinder_y(j+1), wrap_cylinder_x(i-1)), // southweast
+    ];
+}
+
+fn count_active_notes_3_semitones_up_and_down(cells : [[NoteCell ; MEASURE_LENGTH] ; NOTE_RANGE], i : usize, j : usize) -> usize {
+    let wrap_cylinder_y = |int| int % NOTE_RANGE;
+    let i = i + NOTE_RANGE;
+
+    let mut count = 0;
+    if cells[wrap_cylinder_y(i - 1)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i - 2)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i - 3)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i + 1)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i + 2)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i + 3)][j].0 == true { count +=1 }
+    return count;
+}
+
+fn count_active_notes_1_semitone_up_and_down(cells : [[NoteCell ; MEASURE_LENGTH] ; NOTE_RANGE], i : usize, j : usize) -> usize {
+    let wrap_cylinder_y = |int| int % NOTE_RANGE;
+    let i = i + NOTE_RANGE;
+
+    let mut count = 0;
+    if cells[wrap_cylinder_y(i - 1)][j].0 == true { count +=1 }
+    if cells[wrap_cylinder_y(i + 1)][j].0 == true { count +=1 }
+    return count;
+}
+
+fn nutrient_field (x: f64) -> f64 {
+    return ((PI*x).cos()+1.0)/4.0 + ((PI*2.0*x).cos()+1.0)/4.0;
 }

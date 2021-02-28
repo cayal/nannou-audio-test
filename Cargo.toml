@@ -10,3 +10,4 @@ edition = "2018"
 nannou = "0.15"
 cpal = "0.11"               # Low-level cross-platform audio I/O library in pure Rust.
 usfx = "0.1"                # Realtime procedurally generated sound effects
+rand = "0.8"
