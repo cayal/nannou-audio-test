@@ -204,7 +204,7 @@ fn advance_automata(
 
     for i in 0..NOTE_RANGE {
         for j in 0..MEASURE_LENGTH {
-            let c_n = count_neighbors(cells, i, j);
+            let c_n = count_neighbors(cells, i, j, get_moore_neighborhood);
 
             // 100 % prob at 2 neighbors with falloff to 0 as n-> n=0 and n>=4
             let base_probability = (0.0 - (c_n as f64 - 2.0).pow(2.0) + 4.0) / 4.0.max(0.0);
@@ -218,7 +218,6 @@ fn advance_automata(
 
             let check: f64 = rng.gen();
 
-            //println!("{}", count_active_notes_1_semitone_up_and_down(cells, i, j));
             if count_active_notes_1_semitone_up_and_down(cells, i, j) == 0
                 && count_active_notes_3_semitones_up_and_down(cells, i, j) < 3
                 && probability >= check
@@ -232,8 +231,12 @@ fn advance_automata(
     return next_cells;
 }
 
-fn count_neighbors(cells: [[NoteCell; MEASURE_LENGTH]; NOTE_RANGE], i: usize, j: usize) -> usize {
-    let subset: [(usize, usize); 8] = get_moore_neighborhood(i, j);
+fn count_neighbors<F>(cells: [[NoteCell; MEASURE_LENGTH]; NOTE_RANGE],
+    i: usize,
+    j: usize,
+    neighborhood: F) -> usize
+    where F: Fn(usize, usize) -> [(usize, usize); 8] {
+    let subset: [(usize, usize); 8] = neighborhood(i, j);
     return subset.iter().fold(0, |acc, x| {
         return if cells[x.0][x.1].0 == true {
             acc + 1
